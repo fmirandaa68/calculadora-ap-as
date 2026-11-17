@@ -358,7 +358,7 @@ const EJ={
 
 function grafo(E){const N=id=>E.nodes.find(n=>n.id===id);return{N,out:id=>E.edges.filter(e=>e.from===id),inn:id=>E.edges.filter(e=>e.to===id)};}
 function impulsion(E,G,id,isAS){const tr=[];let cur=id;const seen=new Set([id]);
-  for(;;){let o=G.out(cur);if(isAS)o=o.filter(e=>e.tipo==='imp');if(o.length!==1)break;const e=o[0];tr.push(e);cur=e.to;if(seen.has(cur))break;seen.add(cur);const n=G.N(cur);if(!n||(isAS?G.out(cur).filter(x=>x.tipo==='imp').length!==1:n.type!=='nodo'))break;}
+  for(;;){let o=G.out(cur);if(isAS)o=o.filter(e=>e.tipo==='imp');if(o.length!==1)break;const e=o[0];tr.push(e);cur=e.to;if(seen.has(cur))break;seen.add(cur);const n=G.N(cur);if(!n||(isAS?(n.type!=='camara'||G.out(cur).filter(x=>x.tipo==='imp').length!==1):n.type!=='nodo'))break;}
   return{tr,end:G.N(cur)};}
 function hgSteps(n,end,sumL,steps,ck,tipo){let hg=null;
   if(n.modo==='hg'){hg=n.hg;steps.push(S('Altura geométrica','H<sub>g</sub> ingresada','dato',f2(hg),'m'));}
@@ -406,9 +406,12 @@ function calcAP(E){
 
 function calcAS(E){
   const g=E.g,G=grafo(E),res={},qh=g.R*g.Cc*g.d/86400;
-  const upP=(id,path)=>{if(path.has(id))return 0;const p2=new Set(path);p2.add(id);const n=G.N(id);if(!n)return 0;let P=n.type==='red'?n.P:0;G.inn(id).forEach(e=>P+=upP(e.from,p2));return P;};
+  const dRed=n=>okN(n.d)?n.d:g.d,qmRed=n=>g.R*g.Cc*dRed(n)*n.P/86400;
+  const upQ=(id,path)=>{if(path.has(id))return{P:0,qm:0};const p2=new Set(path);p2.add(id);const n=G.N(id);if(!n)return{P:0,qm:0};let P=n.type==='red'?n.P:0,qm=n.type==='red'?qmRed(n):0;G.inn(id).forEach(e=>{const u=upQ(e.from,p2);P+=u.P;qm+=u.qm;});return{P,qm};};
+  const upP=(id,path)=>upQ(id,path).P;
+  const QX=u=>u.P>0?qAS2(u.P,u.qm/u.P,g.dn):0;
   const met=P=>P<100?'BSCE':P<1000?'interpolación':'Harmon';
-  E.edges.forEach(e=>{const P=upP(e.from,new Set()),q=qAS2(Math.max(P,1),qh,g.dn),Q=q/1000,a=G.N(e.from),b=G.N(e.to);const steps=[S('Población aguas arriba','Σ P de las redes que drenan al tramo','',f0(P),'hab'),S('Caudal máximo','Q<sub>max</sub> = f(P) por '+met(P),'Ver módulo AS2',f2(q),'L/s','NCh1105:2019, 6.6.1.1')],ck=[],notes=[];let sum='';
+  E.edges.forEach(e=>{const U=upQ(e.from,new Set()),P=U.P,q=QX(U),Q=q/1000,a=G.N(e.from),b=G.N(e.to);const steps=[S('Población aguas arriba','Σ P de las redes que drenan al tramo','',f0(P),'hab'),S('Caudal medio acumulado','Σ R·C·d<sub>i</sub>·P<sub>i</sub> / 86.400','',f3(U.qm),'L/s'),S('Caudal máximo','Q<sub>max</sub> = f(P, Q<sub>med</sub>) por '+met(P),P>=1000?`M = ${f3(harmon(P))} × ${f3(U.qm)}`:'Ver módulo AS2',f2(q),'L/s','NCh1105:2019, 6.6.1.1')],ck=[],notes=[];let sum='';
     if(e.tipo==='imp'){const D=e.D/1000,hf=hwf(Q,e.L,D,e.C),hs=0.05*hf,V=Q/(Math.PI*D*D/4);steps.push(S('Velocidad','V = 4Q / (π D²)',`4 × ${fmt(Q,4)} / (π × ${f3(D)}²)`,f2(V),'m/s'),S('Pérdida friccional','h<sub>f</sub> Hazen-Williams',`L = ${f0(e.L)}, C = ${f0(e.C)}, D = ${f3(D)}`,f2(hf),'m','Hazen-Williams (SI)'),S('Pérdida singular','h<sub>s</sub> = 0,05 · h<sub>f</sub>','',f2(hs),'m','Bases tarifarias'));
       ck.push(C('Velocidad máxima 3 m/s',V<=3,f2(V)+' m/s'));res[e.id]={q,hf,hs,steps,checks:ck,notes,sum:`impulsión · ${f1(q)} L/s · Ø${e.D} · hf ${f2(hf)} m`,l1:`${f1(q)} L/s`,l2:`Ø${e.D} · hf ${f2(hf)} m`};return;}
     let s,sf;if(a&&b&&okN(a.cota)&&okN(b.cota)){s=(a.cota-b.cota)/e.L;sf=`(${f2(a.cota)} − ${f2(b.cota)}) / ${f0(e.L)}`;}else{s=e.S/1000;sf='ingresada (faltan cotas)';}
@@ -421,14 +424,14 @@ function calcAS(E){
       ck.push(C('h/D ≤ 0,70',h<=0.7,f2(h),'NCh1105:2019, 6.7'),C('V sección llena ≥ 0,60 m/s',Vll>=0.6,f2(Vll)+' m/s','NCh1105:2019, 6.8'),C('V ≤ 3 m/s',V<=3,f2(V)+' m/s','NCh1105:2019, 6.8'));sum=`${f1(q)} L/s · Ø${Da} · ${fmt(s*1000,1)}‰`;res[e.id]={q,steps,checks:ck,notes,sum,l1:`${f1(q)} L/s`,l2:`Ø${Da} · ${fmt(s*1000,1)}‰`};return;}
     else{ck.push(C('Diámetro dentro de la lista nominal',false,'Supera 1.500 mm'));sum='Ø > 1.500';}
     res[e.id]={q,steps,checks:ck,notes,sum};});
-  E.nodes.forEach(n=>{const steps=[],ck=[],notes=[];let sum='';const P=upP(n.id,new Set()),q=P>0?qAS2(P,qh,g.dn):0;
-    if(n.type==='red'){const qm=qh*n.P;steps.push(S('Caudal medio AS','Q<sub>med</sub> = R·C·d·P / 86.400',`${f2(g.R)} × ${f2(g.Cc)} × ${f1(g.d)} × ${f0(n.P)} / 86.400`,f2(qm),'L/s','NCh1105:2019, 6.4'),S('Caudal máximo de la red','por '+met(n.P),'',f2(qAS2(n.P,qh,g.dn)),'L/s','NCh1105:2019, 6.6.1.1'));sum=`${f0(n.P)} hab`;}
+  E.nodes.forEach(n=>{const steps=[],ck=[],notes=[];let sum='';const U=upQ(n.id,new Set()),P=U.P,q=QX(U);
+    if(n.type==='red'){const qm=qmRed(n);steps.push(S('Caudal medio AS','Q<sub>med</sub> = R·C·d·P / 86.400',`${f2(g.R)} × ${f2(g.Cc)} × ${f1(dRed(n))} × ${f0(n.P)} / 86.400`,f3(qm),'L/s','NCh1105:2019, 6.4'),S('Caudal máximo de la red','por '+met(n.P),'',f2(QX({P:n.P,qm})),'L/s','NCh1105:2019, 6.6.1.1'));if(okN(n.d))notes.push(`Dotación propia de la red: ${f1(n.d)} L/hab/d (la general es ${f1(g.d)}).`);sum=`${f0(n.P)} hab · Qmed ${f3(qm)}`;}
     else if(n.type==='peas'){const imp=impulsion(E,G,n.id,true);let hf=0,hs=0;imp.tr.forEach(e=>{hf+=res[e.id].hf||0;hs+=res[e.id].hs||0;});
-      steps.push(S('Población aguas arriba','Σ P','',f0(P),'hab'),S('Caudal de bombeo','Q<sub>max</sub> por '+met(P),'',f2(q),'L/s'));const hg=hgSteps(n,imp.end,0,steps,ck,'PEAS');
+      steps.push(S('Población aguas arriba','Σ P','',f0(P),'hab'),S('Caudal medio acumulado','Σ Q<sub>med</sub> de las redes','',f3(U.qm),'L/s'),S('Caudal de bombeo','Q<sub>max</sub> por '+met(P),P>=1000?`M = ${f3(harmon(P))} × ${f3(U.qm)}`:'',f2(q),'L/s'));const hg=hgSteps(n,imp.end,0,steps,ck,'PEAS');
       steps.push(S('Pérdidas de la impulsión','Σ (h<sub>f</sub> + h<sub>s</sub>)',imp.tr.length?`${imp.tr.length} tramo(s) hasta ${esc(imp.end?imp.end.name:'—')}`:'sin impulsión de salida',f2(hf+hs),'m'));
       if(!imp.tr.length)ck.push(C('La PEAS tiene impulsión',false,'Una con tubería tipo «impulsión»'));
       if(hg!==null){const H=hg+hf+hs,Pw=9.81*(q/1000)*H/n.eta;steps.push(S('Altura manométrica','H = H<sub>g</sub> + Σh<sub>f</sub> + Σh<sub>s</sub>',`${f2(hg)} + ${f2(hf)} + ${f2(hs)}`,f2(H),'m'),S('Potencia','P = 9,81 Q H / η',`9,81 × ${fmt(q/1000,4)} × ${f2(H)} / ${f2(n.eta)}`,f1(Pw),'kW'));sum=`${f1(Pw)} kW · H ${f1(H)} m`;}else sum='falta Hg';}
-    else{steps.push(S('Población aguas arriba','Σ P','',f0(P),'hab'),S('Caudal afluente','Q<sub>max</sub> por '+met(P),'',f2(q),'L/s'));sum=`${f2(q)} L/s`;}
+    else{steps.push(S('Población aguas arriba','Σ P','',f0(P),'hab'),S('Caudal medio acumulado','Σ Q<sub>med</sub> de las redes','',f3(U.qm),'L/s'),S('Caudal afluente','Q<sub>max</sub> por '+met(P),P>=1000?`M = ${f3(harmon(P))} × ${f3(U.qm)}`:'',f2(q),'L/s'));sum=`${f2(q)} L/s`;}
     res[n.id]={steps,checks:ck,notes,sum};});
   return{res};
 }
@@ -440,7 +443,7 @@ const FIELDS={
   estanque:[['name','Nombre','txt'],['cota','Cota de agua','num','m (opcional)',1]],nodo:[['name','Nombre','txt'],['cota','Cota','num','m (opcional)',1]],
   red:[['name','Nombre','txt'],['P','Población','num','hab'],['cota','Cota','num','m (opcional)',1]],
   edge:[['L','Largo','num','m'],['D','Diámetro interior','num','mm'],['mat','Material','sel','',0,()=>C_MAT.map(m=>[m[0],m[1]])],['C','C de Hazen-Williams','num','pro forma; editable']]},
- as:{red:[['name','Nombre','txt'],['P','Población','num','hab'],['cota','Cota de radier de entrega','num','m',1]],camara:[['name','Nombre','txt'],['cota','Cota de radier','num','m',1]],
+ as:{red:[['name','Nombre','txt'],['P','Población','num','hab'],['d','Dotación propia','num','L/hab/d; vacío = la general',1],['cota','Cota de radier de entrega','num','m',1]],camara:[['name','Nombre','txt'],['cota','Cota de radier','num','m',1]],
   peas:[['name','Nombre','txt'],['modo','Altura geométrica','sel','',0,[['cotas','Desde cotas'],['hg','Hg directa']]],['cota','Cota de succión','num','m; nivel en el pozo',1],['hg','Hg directa','num','m'],['eta','Rendimiento η','num','—']],
   ptas:[['name','Nombre','txt'],['cota','Cota','num','m',1]],descarga:[['name','Nombre','txt'],['cota','Cota','num','m',1]],
   edge:[['tipo','Tipo de tramo','sel','',0,[['grav','Gravitacional'],['imp','Impulsión']]],['L','Largo','num','m'],['mat','Material','sel','',0,()=>N_MAT.map(m=>[m[0],m[1]])],['n','n de Manning','num','gravitacional; pro forma'],['S','Pendiente si faltan cotas','num','‰'],['D','Diámetro de impulsión','num','mm'],['C','C de Hazen-Williams','num','impulsión; pro forma']]}
